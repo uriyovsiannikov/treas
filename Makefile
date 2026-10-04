@@ -1,0 +1,221 @@
+BUILD_DIR := Build/Obj
+HOST_DIR := Build
+CC := gcc
+LD := ld
+NASM := nasm
+HOST_SOURCES := Host/Treas.c Host/FileIo.c Host/GuestMemory.c \
+	Host/LaunchImage.c Host/VirtualMachine.c
+HOST_HEADERS := Host/FileIo.h Host/GuestMemory.h Host/LaunchImage.h \
+	Host/VirtualMachine.h
+HOST_CFLAGS := -std=c11 -O2 -Wall -Wextra -Werror -ffunction-sections \
+	-fdata-sections -flto -Wl,--gc-sections -D_XOPEN_SOURCE=700 \
+	-D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -IInclude
+
+CFLAGS := -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding -fno-stack-protector \
+	-fno-pic -fno-pie -fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-ffunction-sections -fdata-sections -m64 -mno-red-zone -mcmodel=kernel \
+	-mno-mmx -mno-sse -mno-sse2 -IInclude
+USER_CFLAGS := -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
+	-fno-stack-protector -fno-pic -fno-pie -fno-asynchronous-unwind-tables \
+	-fno-unwind-tables -ffunction-sections -fdata-sections -m64 -mno-red-zone \
+	-mcmodel=large -mno-mmx -mno-sse -mno-sse2 -IInclude -IUser/Fetch
+LDFLAGS := -nostdlib --gc-sections -z max-page-size=0x1000 -T Linker.ld
+USER_LDFLAGS := -nostdlib --gc-sections -z max-page-size=0x1000 -T User/Linker.ld
+
+.PHONY: all clean run test
+all: $(BUILD_DIR)/Treas.elf $(HOST_DIR)/testapp.texb $(HOST_DIR)/fetch.texb $(HOST_DIR)/treas
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+$(BUILD_DIR)/BootEntry.o: Arch/X64/BootEntry.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/Interrupts.o: Arch/X64/Interrupts.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/UserMode.o: Arch/X64/UserMode.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/UserThreadThunk.o: Arch/X64/UserThreadThunk.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/Context.o: Arch/X64/Context.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/Init.o: User/Init.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/UserEntry.o: User/Runtime/Entry.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/NativeApi.o: User/Runtime/NativeApi.c Include/Treas/UserApi.h Include/Treas/UserAbi.h Include/Treas/UserSystemInformation.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Fetch.o: User/Fetch/Fetch.c User/Fetch/Fetch.h Include/Treas/UserApi.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/FetchConsole.o: User/Fetch/Console.c User/Fetch/Fetch.h Include/Treas/UserApi.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/FetchProcessor.o: User/Fetch/Processor.c User/Fetch/Fetch.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/UserThreadTest.o: Tests/UserThreadTest.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/UserThreadFaultTest.o: Tests/UserThreadFaultTest.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/UserThreadPreemptTest.o: Tests/UserThreadPreemptTest.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/SystemInformationProtectionTest.o: Tests/SystemInformationProtectionTest.asm | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
+
+$(BUILD_DIR)/SdkTest.o: Tests/SdkTest.c Include/Treas/UserApi.h Include/Treas/UserSystemInformation.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/SdkStreamTest.o: Tests/SdkStreamTest.c Include/Treas/UserApi.h Include/Treas/UserSystemInformation.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/SdkImageTest.o: Tests/SdkImageTest.c Include/Treas/UserApi.h Include/Treas/UserSystemInformation.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/SdkReadOnlyTest.o: Tests/SdkReadOnlyTest.c Include/Treas/UserApi.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/SdkNoExecuteTest.o: Tests/SdkNoExecuteTest.c Include/Treas/UserApi.h | $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(HOST_DIR)/testapp.texb: $(BUILD_DIR)/Init.o User/Linker.ld | $(BUILD_DIR)
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/Init.o
+
+$(HOST_DIR)/fetch.texb: $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/Fetch.o $(BUILD_DIR)/FetchConsole.o $(BUILD_DIR)/FetchProcessor.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/Fetch.o $(BUILD_DIR)/FetchConsole.o $(BUILD_DIR)/FetchProcessor.o
+
+$(HOST_DIR)/SdkTest.texb: $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkTest.o
+
+$(HOST_DIR)/SdkStreamTest.texb: $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkStreamTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkStreamTest.o
+
+$(HOST_DIR)/SdkImageTest.texb: $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkImageTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkImageTest.o
+
+$(HOST_DIR)/SdkReadOnlyTest.texb: $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkReadOnlyTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkReadOnlyTest.o
+
+$(HOST_DIR)/SdkNoExecuteTest.texb: $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkNoExecuteTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserEntry.o $(BUILD_DIR)/NativeApi.o $(BUILD_DIR)/SdkNoExecuteTest.o
+
+$(HOST_DIR)/InvalidImage.texb: $(HOST_DIR)/SdkTest.texb Tests/CreateInvalidImage.py
+	python3 Tests/CreateInvalidImage.py $< $@ program-header-bounds
+
+$(HOST_DIR)/InvalidPermissions.texb: $(HOST_DIR)/SdkTest.texb Tests/CreateInvalidImage.py
+	python3 Tests/CreateInvalidImage.py $< $@ writable-executable
+
+$(HOST_DIR)/InvalidEntryPoint.texb: $(HOST_DIR)/SdkTest.texb Tests/CreateInvalidImage.py
+	python3 Tests/CreateInvalidImage.py $< $@ entry-point
+
+$(HOST_DIR)/UserThreadTest.texb: $(BUILD_DIR)/UserThreadTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserThreadTest.o
+
+$(HOST_DIR)/UserThreadFaultTest.texb: $(BUILD_DIR)/UserThreadFaultTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserThreadFaultTest.o
+
+$(HOST_DIR)/UserThreadPreemptTest.texb: $(BUILD_DIR)/UserThreadPreemptTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserThreadPreemptTest.o
+
+$(HOST_DIR)/SystemInformationProtectionTest.texb: $(BUILD_DIR)/SystemInformationProtectionTest.o User/Linker.ld
+	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/SystemInformationProtectionTest.o
+
+$(HOST_DIR)/treas: $(HOST_SOURCES) $(HOST_HEADERS) Include/Treas/LaunchProtocol.h
+	$(CC) $(HOST_CFLAGS) $(HOST_SOURCES) -o $@
+
+$(BUILD_DIR)/KernelMain.o: Kernel/KernelMain.c Include/Treas/ImageLoader.h Include/Treas/ProcessStartup.h Include/Treas/Pvh.h Include/Treas/Thread.h Include/Treas/Timer.h Include/Treas/UserThread.h Include/Treas/Types.h Include/Treas/Hal.h Include/Treas/Kernel.h Include/Treas/PhysicalMemory.h Include/Treas/VirtualMemory.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Thread.o: Kernel/Thread.c Include/Treas/Thread.h Include/Treas/UserThread.h Include/Treas/VirtualMemory.h Include/Treas/Types.h Include/Treas/Hal.h Include/Treas/Kernel.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/SpinLock.o: Kernel/SpinLock.c Include/Treas/SpinLock.h Include/Treas/Types.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/UserThread.o: Kernel/UserThread.c Include/Treas/UserThread.h Include/Treas/Types.h Include/Treas/Kernel.h Include/Treas/SpinLock.h Include/Treas/PhysicalMemory.h Include/Treas/VirtualMemory.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ProcessStartup.o: Kernel/ProcessStartup.c Include/Treas/ProcessStartup.h Include/Treas/LaunchProtocol.h Include/Treas/Pvh.h Include/Treas/Types.h Include/Treas/PhysicalMemory.h Include/Treas/UserThread.h Include/Treas/VirtualMemory.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ImageLoader.o: Kernel/ImageLoader.c Include/Treas/ImageLoader.h Include/Treas/Pvh.h Include/Treas/Types.h Include/Treas/PhysicalMemory.h Include/Treas/UserThread.h Include/Treas/VirtualMemory.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/BugCheck.o: Kernel/BugCheck.c Include/Treas/Types.h Include/Treas/Hal.h Include/Treas/Kernel.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/SystemCall.o: Kernel/SystemCall.c Include/Treas/Types.h Include/Treas/Hal.h Include/Treas/PhysicalMemory.h Include/Treas/SystemCall.h Include/Treas/ProcessStartup.h Include/Treas/Thread.h Include/Treas/Timer.h Include/Treas/UserThread.h Include/Treas/UserSystemInformation.h Include/Treas/VirtualMemory.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Timer.o: Kernel/Timer.c Include/Treas/Types.h Include/Treas/Hal.h Include/Treas/Timer.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Trap.o: Kernel/Trap.c Include/Treas/Trap.h Include/Treas/SystemCall.h Include/Treas/Thread.h Include/Treas/VirtualMemory.h Include/Treas/Kernel.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/PhysicalMemory.o: Kernel/PhysicalMemory.c Include/Treas/Pvh.h Include/Treas/Types.h Include/Treas/SpinLock.h Include/Treas/PhysicalMemory.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/VirtualMemory.o: Kernel/VirtualMemory.c Include/Treas/Types.h Include/Treas/SpinLock.h Include/Treas/PhysicalMemory.h Include/Treas/VirtualMemory.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/HalInterrupts.o: Hal/Interrupts.c Include/Treas/Hal.h Include/Treas/Types.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Pic.o: Hal/Pic.c Hal/HalInternal.h Include/Treas/Hal.h Include/Treas/Types.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Pit.o: Hal/Pit.c Hal/HalInternal.h Include/Treas/Hal.h Include/Treas/Types.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Serial.o: Hal/Serial.c Include/Treas/Hal.h Include/Treas/Types.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Platform.o: Hal/Platform.c Include/Treas/Hal.h Include/Treas/Types.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Treas.elf: $(BUILD_DIR)/BootEntry.o $(BUILD_DIR)/Interrupts.o $(BUILD_DIR)/Context.o $(BUILD_DIR)/UserMode.o $(BUILD_DIR)/UserThreadThunk.o $(BUILD_DIR)/KernelMain.o $(BUILD_DIR)/Thread.o $(BUILD_DIR)/SpinLock.o $(BUILD_DIR)/UserThread.o $(BUILD_DIR)/ProcessStartup.o $(BUILD_DIR)/ImageLoader.o $(BUILD_DIR)/SystemCall.o $(BUILD_DIR)/Timer.o $(BUILD_DIR)/Trap.o $(BUILD_DIR)/BugCheck.o $(BUILD_DIR)/PhysicalMemory.o $(BUILD_DIR)/VirtualMemory.o $(BUILD_DIR)/HalInterrupts.o $(BUILD_DIR)/Pic.o $(BUILD_DIR)/Pit.o $(BUILD_DIR)/Serial.o $(BUILD_DIR)/Platform.o Linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD_DIR)/BootEntry.o $(BUILD_DIR)/Interrupts.o $(BUILD_DIR)/Context.o $(BUILD_DIR)/UserMode.o $(BUILD_DIR)/UserThreadThunk.o $(BUILD_DIR)/KernelMain.o $(BUILD_DIR)/Thread.o $(BUILD_DIR)/SpinLock.o $(BUILD_DIR)/UserThread.o $(BUILD_DIR)/ProcessStartup.o $(BUILD_DIR)/ImageLoader.o $(BUILD_DIR)/SystemCall.o $(BUILD_DIR)/Timer.o $(BUILD_DIR)/Trap.o $(BUILD_DIR)/BugCheck.o $(BUILD_DIR)/PhysicalMemory.o $(BUILD_DIR)/VirtualMemory.o $(BUILD_DIR)/HalInterrupts.o $(BUILD_DIR)/Pic.o $(BUILD_DIR)/Pit.o $(BUILD_DIR)/Serial.o $(BUILD_DIR)/Platform.o
+
+run: all
+	$(HOST_DIR)/treas -b $(HOST_DIR)/testapp.texb
+
+test: all $(HOST_DIR)/UserThreadTest.texb $(HOST_DIR)/UserThreadFaultTest.texb $(HOST_DIR)/UserThreadPreemptTest.texb $(HOST_DIR)/SystemInformationProtectionTest.texb $(HOST_DIR)/SdkTest.texb $(HOST_DIR)/SdkStreamTest.texb $(HOST_DIR)/SdkImageTest.texb $(HOST_DIR)/SdkReadOnlyTest.texb $(HOST_DIR)/SdkNoExecuteTest.texb $(HOST_DIR)/InvalidImage.texb $(HOST_DIR)/InvalidPermissions.texb $(HOST_DIR)/InvalidEntryPoint.texb
+	@test "$$($(HOST_DIR)/treas -b $(HOST_DIR)/UserThreadTest.texb)" = "thread-ok"
+	@$(HOST_DIR)/treas -b $(HOST_DIR)/UserThreadFaultTest.texb >/dev/null
+	@test "$$($(HOST_DIR)/treas -b $(HOST_DIR)/UserThreadPreemptTest.texb)" = "preempt-ok"
+	@$(HOST_DIR)/treas -b $(HOST_DIR)/SystemInformationProtectionTest.texb
+	@test "$$($(HOST_DIR)/treas -b $(HOST_DIR)/SdkTest.texb)" = "sdk-ok"
+	@printf 'hello\n' | $(HOST_DIR)/treas -b $(HOST_DIR)/SdkStreamTest.texb >$(BUILD_DIR)/SdkStreamTest.stdout 2>$(BUILD_DIR)/SdkStreamTest.stderr
+	@test "$$(cat $(BUILD_DIR)/SdkStreamTest.stdout)" = "stdin:hello"
+	@test "$$(cat $(BUILD_DIR)/SdkStreamTest.stderr)" = "stderr-ok"
+	@test "$$($(HOST_DIR)/treas -b $(HOST_DIR)/SdkImageTest.texb)" = "image-ok"
+	@Status=0; $(HOST_DIR)/treas -b $(HOST_DIR)/SdkReadOnlyTest.texb >/dev/null || Status=$$?; test $$Status -eq 127
+	@Status=0; $(HOST_DIR)/treas -b $(HOST_DIR)/SdkNoExecuteTest.texb >/dev/null || Status=$$?; test $$Status -eq 127
+	@Status=0; $(HOST_DIR)/treas -b $(HOST_DIR)/InvalidImage.texb >/dev/null || Status=$$?; test $$Status -eq 127
+	@Status=0; $(HOST_DIR)/treas -b $(HOST_DIR)/InvalidPermissions.texb >/dev/null || Status=$$?; test $$Status -eq 127
+	@Status=0; $(HOST_DIR)/treas -b $(HOST_DIR)/InvalidEntryPoint.texb >/dev/null || Status=$$?; test $$Status -eq 127
+	@Output="$$($(HOST_DIR)/treas -b $(HOST_DIR)/fetch.texb)" && \
+		printf '%s\n' "$$Output" | grep -q "Memory:"
+
+clean:
+	$(RM) -r $(BUILD_DIR)
+	$(RM) $(HOST_DIR)/treas $(HOST_DIR)/testapp.texb $(HOST_DIR)/fetch.texb
+	$(RM) $(HOST_DIR)/UserThreadTest.texb $(HOST_DIR)/UserThreadFaultTest.texb
+	$(RM) $(HOST_DIR)/UserThreadPreemptTest.texb
+	$(RM) $(HOST_DIR)/SystemInformationProtectionTest.texb
+	$(RM) $(HOST_DIR)/SdkTest.texb
+	$(RM) $(HOST_DIR)/SdkStreamTest.texb
+	$(RM) $(HOST_DIR)/SdkImageTest.texb $(HOST_DIR)/InvalidImage.texb
+	$(RM) $(HOST_DIR)/InvalidPermissions.texb $(HOST_DIR)/InvalidEntryPoint.texb
+	$(RM) $(HOST_DIR)/SdkReadOnlyTest.texb $(HOST_DIR)/SdkNoExecuteTest.texb

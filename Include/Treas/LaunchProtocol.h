@@ -1,0 +1,24 @@
+#ifndef _TREAS_LAUNCH_PROTOCOL_H_
+#define _TREAS_LAUNCH_PROTOCOL_H_
+
+#include <Treas/Types.h>
+
+#define TREAS_LAUNCH_IMAGE_MAGIC 0x42535254u
+#define TREAS_LAUNCH_IMAGE_VERSION 1u
+#define TREAS_LAUNCH_MAX_ARGUMENT_COUNT 64u
+#define TREAS_LAUNCH_MAX_ARGUMENT_SIZE 16384ULL
+#define TREAS_LAUNCH_MAX_IMAGE_SIZE (16ULL * 1024 * 1024)
+
+typedef struct _TREAS_LAUNCH_IMAGE_HEADER {
+    ULONG Magic;
+    ULONG Version;
+    ULONGLONG HeaderSize;
+    ULONGLONG ImageOffset;
+    ULONGLONG ImageSize;
+    ULONGLONG ArgumentOffset;
+    ULONGLONG ArgumentSize;
+    ULONG ArgumentCount;
+    ULONG Reserved;
+} TREAS_LAUNCH_IMAGE_HEADER, *PTREAS_LAUNCH_IMAGE_HEADER;
+
+#endif

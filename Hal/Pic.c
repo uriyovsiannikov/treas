@@ -44,9 +44,13 @@ VOID HalpInitializePic(VOID)
     HalpWritePortByte(HAL_PIC_SLAVE_DATA, 0x01);
     HalpWaitForPortIo();
 
-    /* Only IRQ0 (the PIT) is enabled; every other legacy IRQ remains masked. */
-    HalpWritePortByte(HAL_PIC_MASTER_DATA, 0xFE);
+    HalpWritePortByte(HAL_PIC_MASTER_DATA, 0xFF);
     HalpWritePortByte(HAL_PIC_SLAVE_DATA, 0xFF);
+}
+
+VOID HalpSetTimerMasked(BOOLEAN Masked)
+{
+    HalpWritePortByte(HAL_PIC_MASTER_DATA, Masked ? 0xFF : 0xFE);
 }
 
 VOID HalAcknowledgeTimerInterrupt(VOID)

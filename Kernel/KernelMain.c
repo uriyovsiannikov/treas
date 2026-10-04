@@ -2,6 +2,7 @@
 #include <Treas/ImageLoader.h>
 #include <Treas/Kernel.h>
 #include <Treas/PhysicalMemory.h>
+#include <Treas/Process.h>
 #include <Treas/ProcessStartup.h>
 #include <Treas/Pvh.h>
 #include <Treas/Thread.h>
@@ -14,7 +15,6 @@ extern VOID KiEnterUserMode(ULONGLONG InstructionPointer,
                             ULONGLONG ArgumentCount,
                             ULONGLONG ArgumentVector);
 
-static MM_ADDRESS_SPACE KipInitialAddressSpace;
 static ULONGLONG KipInitialUserEntryPoint;
 static ULONGLONG KipInitialUserStackPointer;
 static ULONGLONG KipInitialUserArgumentCount;
@@ -23,23 +23,24 @@ static ULONGLONG KipInitialUserArgumentVector;
 static BOOLEAN KipLoadInitialUserProcess(PPVH_MODULE_ENTRY Module)
 {
     MI_LAUNCH_IMAGE LaunchImage;
+    PEPROCESS Process = PsGetInitialProcess();
 
     if (Module == 0 || !MiParseLaunchImage(Module, &LaunchImage)) {
         return FALSE;
     }
 
-    if (!MmCreateAddressSpace(&KipInitialAddressSpace) ||
-        !MiLoadInitialProcess(&KipInitialAddressSpace,
+    if (!MmCreateAddressSpace(&Process->AddressSpace) ||
+        !MiLoadInitialProcess(&Process->AddressSpace,
                               LaunchImage.Image,
                               LaunchImage.ImageSize,
                               &KipInitialUserEntryPoint) ||
-        !MiInitializeUserThreadSupport(&KipInitialAddressSpace) ||
-        !MiBuildInitialUserStack(&KipInitialAddressSpace,
+        !MiInitializeUserThreadSupport(&Process->AddressSpace) ||
+        !MiBuildInitialUserStack(&Process->AddressSpace,
                                  &LaunchImage,
                                  &KipInitialUserStackPointer,
                                  &KipInitialUserArgumentCount,
                                  &KipInitialUserArgumentVector)) {
-        MmDestroyAddressSpace(&KipInitialAddressSpace);
+        MmDestroyAddressSpace(&Process->AddressSpace);
         return FALSE;
     }
 
@@ -48,9 +49,11 @@ static BOOLEAN KipLoadInitialUserProcess(PPVH_MODULE_ENTRY Module)
 
 static VOID KipRunInitialUserProcess(VOID)
 {
-    if (!MmSwitchAddressSpace(&KipInitialAddressSpace)) {
+    PEPROCESS Process = PsGetInitialProcess();
+
+    if (!MmSwitchAddressSpace(&Process->AddressSpace)) {
         KiBugCheck(KI_BUGCHECK_INVALID_MEMORY_MAP,
-                   KipInitialAddressSpace.PageTableBase);
+                   Process->AddressSpace.PageTableBase);
     }
 
     KeSetCurrentThreadAsPrimaryUser();
@@ -84,14 +87,17 @@ static VOID KipStartInitialUserProcess(PVOID StartInfoContext)
 
 PMM_ADDRESS_SPACE KiGetInitialProcessAddressSpace(VOID)
 {
-    return &KipInitialAddressSpace;
+    return &PsGetInitialProcess()->AddressSpace;
 }
 
 VOID KiKernelMain(ULONG StartInfoAddress)
 {
-    HalInitializeSerial();
+    if (!HalInitializeApplicationIo()) {
+        KiBugCheck(KI_BUGCHECK_INVALID_PVH_INFO, StartInfoAddress);
+    }
     HalInitializeInterrupts();
     HalInitializeTimer(KI_SYSTEM_TIMER_FREQUENCY);
+    KiInitializeClock();
     HalInitializeSystemCalls();
 
     if (!MmInitializePhysicalMemory(StartInfoAddress)) {

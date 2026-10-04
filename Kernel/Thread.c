@@ -34,6 +34,7 @@ static PKI_THREAD KipCurrentThread;
 static PKI_THREAD KipReadyThreadHead;
 static PKI_THREAD KipReadyThreadTail;
 static BOOLEAN KipThreadSchedulerInitialized;
+static BOOLEAN KipPreemptionTimerHeld;
 
 extern UCHAR KiBootStackTop;
 extern VOID KipThreadStartup(VOID);
@@ -205,6 +206,10 @@ BOOLEAN KeCreateUserThread(PMM_ADDRESS_SPACE AddressSpace,
     }
     Thread->ReadyNext = 0;
     KipAppendReadyThread(Thread);
+    if (!KipPreemptionTimerHeld) {
+        HalAcquireTimer();
+        KipPreemptionTimerHeld = TRUE;
+    }
     *ThreadId = Index;
     return TRUE;
 }
@@ -282,6 +287,11 @@ VOID KeExitThread(VOID)
         if (NewThread->StackPointer == 0) {
             KiBugCheck(KI_BUGCHECK_SCHEDULER_FAILURE, 2);
         }
+    }
+
+    if (KipReadyThreadHead == 0 && KipPreemptionTimerHeld) {
+        HalReleaseTimer();
+        KipPreemptionTimerHeld = FALSE;
     }
 
     NewThread->State = KI_THREAD_STATE_RUNNING;

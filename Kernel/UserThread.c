@@ -152,7 +152,8 @@ VOID MiDestroyUserThreadStack(PMM_ADDRESS_SPACE AddressSpace,
             continue;
         }
         if (!MmUnmapVirtualPage(AddressSpace,
-                                StackBase + (ULONGLONG)PageIndex * MM_PAGE_SIZE) ||
+                                StackBase + (ULONGLONG)PageIndex * MM_PAGE_SIZE,
+                                0) ||
             !MmFreePhysicalPage(StackPages[PageIndex])) {
             KiBugCheck(KI_BUGCHECK_INVALID_MEMORY_MAP,
                        StackBase + (ULONGLONG)PageIndex * MM_PAGE_SIZE);

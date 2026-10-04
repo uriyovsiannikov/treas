@@ -4,7 +4,9 @@
 #include <Treas/Types.h>
 
 #define KI_SYSTEM_TIMER_FREQUENCY 100
+#define KI_SYSTEM_TIME_FREQUENCY 1000000UL
 
+VOID KiInitializeClock(VOID);
 VOID KiTimerInterrupt(VOID);
 ULONGLONG KiQueryTimerTickCount(VOID);
 

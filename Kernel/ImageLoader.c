@@ -1,6 +1,7 @@
 #include <Treas/ImageLoader.h>
 #include <Treas/PhysicalMemory.h>
 #include <Treas/UserThread.h>
+#include <Treas/UserVirtualMemoryManager.h>
 
 #define MI_ELF_CLASS_64 2
 #define MI_ELF_DATA_LITTLE_ENDIAN 1
@@ -103,6 +104,8 @@ static BOOLEAN MipValidateLoadSegment(ULONGLONG ImageSize,
     SegmentEnd = Segment->VirtualAddress + Segment->MemorySize;
     if ((Segment->VirtualAddress < MI_USER_THREAD_EXIT_THUNK_ADDRESS + MM_PAGE_SIZE &&
          SegmentEnd > MI_USER_THREAD_EXIT_THUNK_ADDRESS) ||
+        (Segment->VirtualAddress < MI_USER_DYNAMIC_LIMIT &&
+         SegmentEnd > MI_USER_DYNAMIC_BASE) ||
         SegmentEnd > MI_USER_THREAD_STACK_RESERVED_BASE) {
         return FALSE;
     }

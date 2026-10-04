@@ -10,43 +10,25 @@
 #include <unistd.h>
 #include <Treas/Types.h>
 #include "FileIo.h"
+#include "FilePortal.h"
 #include "GuestMemory.h"
+#include "SharedChannel.h"
 #include "VirtualMachine.h"
 
-static VOID TreaspForwardPipedInput(int InputDescriptor)
-{
-    static const char EndOfInput = 0x04;
-    struct timespec Delay = {0, 100000000};
-    char Buffer[4096];
-
-    while (nanosleep(&Delay, &Delay) < 0 && errno == EINTR) {
-    }
-    for (;;) {
-        ssize_t Size = read(STDIN_FILENO, Buffer, sizeof(Buffer));
-
-        if (Size < 0 && errno == EINTR) {
-            continue;
-        }
-        if (Size <= 0 ||
-            !TreaspWriteFile(InputDescriptor, Buffer, (size_t)Size)) {
-            break;
-        }
-    }
-    (void)TreaspWriteFile(InputDescriptor, &EndOfInput, 1);
-    close(InputDescriptor);
-}
-
-int TreaspRunVirtualMachine(const char *KernelPath, const char *LaunchPath)
+int TreaspRunVirtualMachine(const char *KernelPath,
+                            const char *LaunchPath,
+                            ULONG FileCount,
+                            const TREASP_FILE_ARGUMENT *Files)
 {
     char MemorySize[32];
-    char ApplicationErrorPath[] = "/tmp/TreasApplicationErrorXXXXXX";
     char QemuErrorPath[] = "/tmp/TreasQemuErrorXXXXXX";
-    char ErrorSerialArgument[sizeof(ApplicationErrorPath) + sizeof("file:")];
+    char SharedMemoryArgument[160];
     const char *MachineType;
     const char *ProcessorType;
     ULONGLONG MemoryMegabytes;
-    int ApplicationErrorDescriptor;
     int QemuErrorDescriptor;
+    TREASP_SHARED_CHANNEL SharedChannel;
+    TREASP_FILE_PORTAL FilePortal;
     char *Arguments[] = {
         "qemu-system-x86_64",
         "-machine", NULL,
@@ -55,9 +37,8 @@ int TreaspRunVirtualMachine(const char *KernelPath, const char *LaunchPath)
         "-kernel", (char *)KernelPath,
         "-initrd", (char *)LaunchPath,
         "-nodefaults",
-        "-serial", "null",
-        "-serial", "stdio",
-        "-serial", ErrorSerialArgument,
+        "-object", SharedMemoryArgument,
+        "-device", "ivshmem-plain,memdev=treas-shared",
         "-monitor", "none",
         "-display", "none",
         "-no-reboot",
@@ -65,27 +46,28 @@ int TreaspRunVirtualMachine(const char *KernelPath, const char *LaunchPath)
         NULL
     };
     pid_t ChildProcess;
-    int ChildStatus;
+    int ChildStatus = 1 << 8;
     int ApplicationStatus;
-    int InputPipe[2] = {-1, -1};
-    int ForwardInput = 0;
-    struct stat InputStatus;
     struct stat QemuErrorStatus;
+    struct timespec PollDelay = {0, 1000000};
 
-    ApplicationErrorDescriptor = mkstemp(ApplicationErrorPath);
-    if (ApplicationErrorDescriptor < 0) {
-        perror("treas: cannot create application error stream");
+    if (!TreaspCreateSharedChannel(&SharedChannel)) {
         return 1;
     }
-    close(ApplicationErrorDescriptor);
+    if (!TreaspInitializeFilePortal(&FilePortal, FileCount, Files)) {
+        TreaspDestroySharedChannel(&SharedChannel);
+        return 1;
+    }
     QemuErrorDescriptor = mkstemp(QemuErrorPath);
     if (QemuErrorDescriptor < 0) {
         perror("treas: cannot create QEMU error stream");
-        unlink(ApplicationErrorPath);
+        TreaspDestroyFilePortal(&FilePortal);
+        TreaspDestroySharedChannel(&SharedChannel);
         return 1;
     }
-    snprintf(ErrorSerialArgument, sizeof(ErrorSerialArgument), "file:%s",
-             ApplicationErrorPath);
+    snprintf(SharedMemoryArgument, sizeof(SharedMemoryArgument),
+             "memory-backend-file,id=treas-shared,size=%u,share=on,mem-path=%s",
+             TREAS_SHARED_CHANNEL_SIZE, SharedChannel.Path);
     if (access("/dev/kvm", R_OK | W_OK) == 0) {
         MachineType = "q35,accel=kvm";
         ProcessorType = "host";
@@ -95,41 +77,19 @@ int TreaspRunVirtualMachine(const char *KernelPath, const char *LaunchPath)
     }
     Arguments[2] = (char *)MachineType;
     Arguments[4] = (char *)ProcessorType;
-    if (fstat(STDIN_FILENO, &InputStatus) == 0 &&
-        (S_ISFIFO(InputStatus.st_mode) || S_ISREG(InputStatus.st_mode))) {
-        if (pipe(InputPipe) != 0) {
-            perror("treas: cannot create application input stream");
-            close(QemuErrorDescriptor);
-            unlink(QemuErrorPath);
-            unlink(ApplicationErrorPath);
-            return 1;
-        }
-        ForwardInput = 1;
-        (void)signal(SIGPIPE, SIG_IGN);
-    }
     MemoryMegabytes = TreaspGetGuestMemoryMegabytes();
     snprintf(MemorySize, sizeof(MemorySize), "%lluM",
              (unsigned long long)MemoryMegabytes);
     ChildProcess = fork();
     if (ChildProcess < 0) {
         perror("treas: cannot start virtual machine");
-        if (ForwardInput) {
-            close(InputPipe[0]);
-            close(InputPipe[1]);
-        }
         close(QemuErrorDescriptor);
         unlink(QemuErrorPath);
-        unlink(ApplicationErrorPath);
+        TreaspDestroyFilePortal(&FilePortal);
+        TreaspDestroySharedChannel(&SharedChannel);
         return 1;
     }
     if (ChildProcess == 0) {
-        if (ForwardInput) {
-            close(InputPipe[1]);
-            if (dup2(InputPipe[0], STDIN_FILENO) < 0) {
-                _exit(126);
-            }
-            close(InputPipe[0]);
-        }
         if (dup2(QemuErrorDescriptor, STDERR_FILENO) < 0) {
             _exit(126);
         }
@@ -139,20 +99,29 @@ int TreaspRunVirtualMachine(const char *KernelPath, const char *LaunchPath)
         _exit(127);
     }
     close(QemuErrorDescriptor);
-    if (ForwardInput) {
-        close(InputPipe[0]);
-        TreaspForwardPipedInput(InputPipe[1]);
-    }
+    (void)signal(SIGPIPE, SIG_IGN);
+    for (;;) {
+        pid_t WaitResult;
 
-    while (waitpid(ChildProcess, &ChildStatus, 0) < 0) {
-        if (errno == EINTR) {
-            continue;
+        if (!TreaspPumpSharedChannel(&SharedChannel, &FilePortal)) {
+            (void)kill(ChildProcess, SIGTERM);
+            while (waitpid(ChildProcess, &ChildStatus, 0) < 0 &&
+                   errno == EINTR) {
+            }
+            break;
         }
-        perror("treas: waiting for virtual machine failed");
-        unlink(QemuErrorPath);
-        unlink(ApplicationErrorPath);
-        return 1;
+        WaitResult = waitpid(ChildProcess, &ChildStatus, WNOHANG);
+        if (WaitResult == ChildProcess) {
+            break;
+        }
+        if (WaitResult < 0 && errno != EINTR) {
+            perror("treas: waiting for virtual machine failed");
+            ChildStatus = 1 << 8;
+            break;
+        }
+        (void)nanosleep(&PollDelay, NULL);
     }
+    (void)TreaspPumpSharedChannel(&SharedChannel, &FilePortal);
     if (WIFEXITED(ChildStatus) &&
         (WEXITSTATUS(ChildStatus) == 1 ||
          WEXITSTATUS(ChildStatus) == 127) &&
@@ -168,8 +137,8 @@ int TreaspRunVirtualMachine(const char *KernelPath, const char *LaunchPath)
     } else {
         ApplicationStatus = 1;
     }
-    TreaspCopyFileToDescriptor(ApplicationErrorPath, STDERR_FILENO);
     unlink(QemuErrorPath);
-    unlink(ApplicationErrorPath);
+    TreaspDestroyFilePortal(&FilePortal);
+    TreaspDestroySharedChannel(&SharedChannel);
     return ApplicationStatus;
 }

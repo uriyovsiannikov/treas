@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <Treas/LaunchProtocol.h>
+#include "FilePortal.h"
 #include "LaunchImage.h"
 #include "VirtualMachine.h"
 
@@ -46,20 +47,41 @@ int main(int ArgumentCount, char **Arguments)
     size_t BinaryPathLength;
     int ApplicationArgumentStart;
     ULONG ApplicationArgumentCount;
+    TREASP_FILE_ARGUMENT Files[TREAS_SHARED_MAX_FILES];
+    ULONG FileCount;
     int ExitCode;
 
     if (ArgumentCount < 3 || strcmp(Arguments[1], "-b") != 0) {
-        fprintf(stderr, "Usage: treas -b <application.texb> [-- <arguments...>]\n");
+        fprintf(stderr, "Usage: treas -b <application.texb> [--read file | --write file]... [-- arguments...]\n");
         return 2;
     }
 
     ApplicationArgumentStart = 3;
-    if (ArgumentCount > 3) {
-        if (strcmp(Arguments[3], "--") != 0) {
-            fprintf(stderr, "treas: application arguments must follow --\n");
+    FileCount = 0;
+    while (ApplicationArgumentStart < ArgumentCount &&
+           strcmp(Arguments[ApplicationArgumentStart], "--") != 0) {
+        ULONG Access;
+
+        if (strcmp(Arguments[ApplicationArgumentStart], "--read") == 0) {
+            Access = TREASP_FILE_ACCESS_READ;
+        } else if (strcmp(Arguments[ApplicationArgumentStart], "--write") == 0) {
+            Access = TREASP_FILE_ACCESS_WRITE;
+        } else {
+            fprintf(stderr, "treas: expected --read, --write, or --\n");
             return 2;
         }
-        ApplicationArgumentStart = 4;
+        if (ApplicationArgumentStart + 1 >= ArgumentCount ||
+            FileCount == TREAS_SHARED_MAX_FILES) {
+            fprintf(stderr, "treas: invalid host file arguments\n");
+            return 2;
+        }
+        Files[FileCount].Access = Access;
+        Files[FileCount].Path = Arguments[ApplicationArgumentStart + 1];
+        FileCount++;
+        ApplicationArgumentStart += 2;
+    }
+    if (ApplicationArgumentStart < ArgumentCount) {
+        ApplicationArgumentStart++;
     }
     ApplicationArgumentCount = 1 +
         (ULONG)(ArgumentCount - ApplicationArgumentStart);
@@ -104,7 +126,8 @@ int main(int ArgumentCount, char **Arguments)
             free(BinaryPath);
             return 2;
         }
-        ExitCode = TreaspRunVirtualMachine(ResolvedKernelPath, LaunchPath);
+        ExitCode = TreaspRunVirtualMachine(ResolvedKernelPath, LaunchPath,
+                                           FileCount, Files);
         unlink(LaunchPath);
         free(LaunchPath);
     }

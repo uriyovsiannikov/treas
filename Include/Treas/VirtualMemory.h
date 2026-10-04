@@ -23,7 +23,11 @@ BOOLEAN MmMapPhysicalPage(PMM_ADDRESS_SPACE AddressSpace,
                           ULONGLONG PhysicalAddress,
                           ULONGLONG Protection);
 BOOLEAN MmUnmapVirtualPage(PMM_ADDRESS_SPACE AddressSpace,
-                           ULONGLONG VirtualAddress);
+                           ULONGLONG VirtualAddress,
+                           ULONGLONG *PhysicalAddress);
+BOOLEAN MmProtectVirtualPage(PMM_ADDRESS_SPACE AddressSpace,
+                             ULONGLONG VirtualAddress,
+                             ULONGLONG Protection);
 BOOLEAN MmIsUserRangeValid(ULONGLONG VirtualAddress,
                            ULONGLONG Length);
 BOOLEAN MmIsUserRangeWritable(ULONGLONG VirtualAddress,

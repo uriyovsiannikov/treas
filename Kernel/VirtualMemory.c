@@ -424,7 +424,8 @@ BOOLEAN MmMapPhysicalPage(PMM_ADDRESS_SPACE AddressSpace,
 }
 
 BOOLEAN MmUnmapVirtualPage(PMM_ADDRESS_SPACE AddressSpace,
-                           ULONGLONG VirtualAddress)
+                           ULONGLONG VirtualAddress,
+                           ULONGLONG *PhysicalAddress)
 {
     ULONGLONG *Entry;
     BOOLEAN RestoreInterrupts;
@@ -445,8 +446,47 @@ BOOLEAN MmUnmapVirtualPage(PMM_ADDRESS_SPACE AddressSpace,
         return FALSE;
     }
 
+    if (PhysicalAddress != 0) {
+        *PhysicalAddress = *Entry & MM_PAGE_ADDRESS_MASK;
+    }
     *Entry = 0;
     __asm__ volatile ("invlpg (%0)" : : "r"((PVOID)(ULONG_PTR)VirtualAddress) : "memory");
+    KeReleaseSpinLock(&MmpPageTableLock, RestoreInterrupts);
+    return TRUE;
+}
+
+BOOLEAN MmProtectVirtualPage(PMM_ADDRESS_SPACE AddressSpace,
+                             ULONGLONG VirtualAddress,
+                             ULONGLONG Protection)
+{
+    ULONGLONG *Entry;
+    ULONGLONG AllowedProtection;
+    ULONGLONG PhysicalAddress;
+    BOOLEAN RestoreInterrupts;
+
+    AllowedProtection = MM_PAGE_WRITE | MM_PAGE_USER | MM_PAGE_NO_EXECUTE;
+    if (AddressSpace == 0 || AddressSpace->PageTableBase == 0 ||
+        (VirtualAddress & (MM_PAGE_SIZE - 1)) != 0 ||
+        (Protection & ~AllowedProtection) != 0 ||
+        (Protection & MM_PAGE_USER) == 0 ||
+        VirtualAddress < MM_USER_ADDRESS_MIN ||
+        VirtualAddress >= MM_USER_ADDRESS_LIMIT ||
+        ((Protection & MM_PAGE_NO_EXECUTE) != 0 && !MmpNoExecuteEnabled)) {
+        return FALSE;
+    }
+
+    RestoreInterrupts = KeAcquireSpinLock(&MmpPageTableLock);
+    Entry = MmpGetPte(AddressSpace->PageTableBase, VirtualAddress, FALSE, FALSE);
+    if (Entry == 0 || (*Entry & (MM_PAGE_PRESENT | MM_PAGE_USER)) !=
+                      (MM_PAGE_PRESENT | MM_PAGE_USER)) {
+        KeReleaseSpinLock(&MmpPageTableLock, RestoreInterrupts);
+        return FALSE;
+    }
+
+    PhysicalAddress = *Entry & MM_PAGE_ADDRESS_MASK;
+    *Entry = PhysicalAddress | MM_PAGE_PRESENT | Protection;
+    __asm__ volatile ("invlpg (%0)" : : "r"((PVOID)(ULONG_PTR)VirtualAddress)
+                      : "memory");
     KeReleaseSpinLock(&MmpPageTableLock, RestoreInterrupts);
     return TRUE;
 }

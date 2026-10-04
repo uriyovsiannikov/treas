@@ -66,9 +66,6 @@ $(BUILD_DIR)/FetchConsole.o: User/Fetch/Console.c User/Fetch/Fetch.h Include/Tre
 $(BUILD_DIR)/FetchProcessor.o: User/Fetch/Processor.c User/Fetch/Fetch.h | $(BUILD_DIR)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/UserThreadTest.o: Tests/UserThreadTest.asm | $(BUILD_DIR)
-	$(NASM) -f elf64 $< -o $@
-
 $(BUILD_DIR)/UserThreadFaultTest.o: Tests/UserThreadFaultTest.asm | $(BUILD_DIR)
 	$(NASM) -f elf64 $< -o $@
 
@@ -77,9 +74,6 @@ $(BUILD_DIR)/UserThreadPreemptTest.o: Tests/UserThreadPreemptTest.asm | $(BUILD_
 
 $(BUILD_DIR)/SystemInformationProtectionTest.o: Tests/SystemInformationProtectionTest.asm | $(BUILD_DIR)
 	$(NASM) -f elf64 $< -o $@
-
-$(BUILD_DIR)/SdkTest.o: Tests/SdkTest.c Include/Treas/UserApi.h Include/Treas/UserSystemInformation.h | $(BUILD_DIR)
-	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/SdkStreamTest.o: Tests/SdkStreamTest.c Include/Treas/UserApi.h Include/Treas/UserSystemInformation.h | $(BUILD_DIR)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
@@ -108,9 +102,6 @@ $(HOST_DIR)/testapp.texb: $(BUILD_DIR)/Init.o User/Linker.ld | $(BUILD_DIR)
 $(HOST_DIR)/fetch.texb: $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/Fetch.o $(BUILD_DIR)/FetchConsole.o $(BUILD_DIR)/FetchProcessor.o User/Linker.ld
 	$(LD) $(USER_LDFLAGS) -o $@ $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/Fetch.o $(BUILD_DIR)/FetchConsole.o $(BUILD_DIR)/FetchProcessor.o
 
-$(HOST_DIR)/SdkTest.texb: $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/SdkTest.o User/Linker.ld
-	$(LD) $(USER_LDFLAGS) -o $@ $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/SdkTest.o
-
 $(HOST_DIR)/SdkStreamTest.texb: $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/SdkStreamTest.o User/Linker.ld
 	$(LD) $(USER_LDFLAGS) -o $@ $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/SdkStreamTest.o
 
@@ -132,17 +123,14 @@ $(HOST_DIR)/SdkFileTest.texb: $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/SdkFileTest.o
 $(HOST_DIR)/SdkObjectTest.texb: $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/SdkObjectTest.o User/Linker.ld
 	$(LD) $(USER_LDFLAGS) -o $@ $(USER_RUNTIME_OBJECTS) $(BUILD_DIR)/SdkObjectTest.o
 
-$(HOST_DIR)/InvalidImage.texb: $(HOST_DIR)/SdkTest.texb Tests/CreateInvalidImage.py
+$(HOST_DIR)/InvalidImage.texb: $(HOST_DIR)/SdkImageTest.texb Tests/CreateInvalidImage.py
 	python3 Tests/CreateInvalidImage.py $< $@ program-header-bounds
 
-$(HOST_DIR)/InvalidPermissions.texb: $(HOST_DIR)/SdkTest.texb Tests/CreateInvalidImage.py
+$(HOST_DIR)/InvalidPermissions.texb: $(HOST_DIR)/SdkImageTest.texb Tests/CreateInvalidImage.py
 	python3 Tests/CreateInvalidImage.py $< $@ writable-executable
 
-$(HOST_DIR)/InvalidEntryPoint.texb: $(HOST_DIR)/SdkTest.texb Tests/CreateInvalidImage.py
+$(HOST_DIR)/InvalidEntryPoint.texb: $(HOST_DIR)/SdkImageTest.texb Tests/CreateInvalidImage.py
 	python3 Tests/CreateInvalidImage.py $< $@ entry-point
-
-$(HOST_DIR)/UserThreadTest.texb: $(BUILD_DIR)/UserThreadTest.o User/Linker.ld
-	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserThreadTest.o
 
 $(HOST_DIR)/UserThreadFaultTest.texb: $(BUILD_DIR)/UserThreadFaultTest.o User/Linker.ld
 	$(LD) $(USER_LDFLAGS) -o $@ $(BUILD_DIR)/UserThreadFaultTest.o
@@ -243,12 +231,10 @@ run: all
 benchmark: all
 	python3 Tests/Benchmark.py
 
-test: all $(HOST_DIR)/UserThreadTest.texb $(HOST_DIR)/UserThreadFaultTest.texb $(HOST_DIR)/UserThreadPreemptTest.texb $(HOST_DIR)/SystemInformationProtectionTest.texb $(HOST_DIR)/SdkTest.texb $(HOST_DIR)/SdkStreamTest.texb $(HOST_DIR)/SdkImageTest.texb $(HOST_DIR)/SdkReadOnlyTest.texb $(HOST_DIR)/SdkNoExecuteTest.texb $(HOST_DIR)/SdkMemoryTest.texb $(HOST_DIR)/SdkFileTest.texb $(HOST_DIR)/SdkObjectTest.texb $(HOST_DIR)/InvalidImage.texb $(HOST_DIR)/InvalidPermissions.texb $(HOST_DIR)/InvalidEntryPoint.texb
-	@test "$$($(HOST_DIR)/treas -b $(HOST_DIR)/UserThreadTest.texb)" = "thread-ok"
+test: all $(HOST_DIR)/UserThreadFaultTest.texb $(HOST_DIR)/UserThreadPreemptTest.texb $(HOST_DIR)/SystemInformationProtectionTest.texb $(HOST_DIR)/SdkStreamTest.texb $(HOST_DIR)/SdkImageTest.texb $(HOST_DIR)/SdkReadOnlyTest.texb $(HOST_DIR)/SdkNoExecuteTest.texb $(HOST_DIR)/SdkMemoryTest.texb $(HOST_DIR)/SdkFileTest.texb $(HOST_DIR)/SdkObjectTest.texb $(HOST_DIR)/InvalidImage.texb $(HOST_DIR)/InvalidPermissions.texb $(HOST_DIR)/InvalidEntryPoint.texb
 	@$(HOST_DIR)/treas -b $(HOST_DIR)/UserThreadFaultTest.texb >/dev/null
 	@test "$$($(HOST_DIR)/treas -b $(HOST_DIR)/UserThreadPreemptTest.texb)" = "preempt-ok"
 	@$(HOST_DIR)/treas -b $(HOST_DIR)/SystemInformationProtectionTest.texb
-	@test "$$($(HOST_DIR)/treas -b $(HOST_DIR)/SdkTest.texb)" = "sdk-ok"
 	@printf 'hello\n' | $(HOST_DIR)/treas -b $(HOST_DIR)/SdkStreamTest.texb >$(BUILD_DIR)/SdkStreamTest.stdout 2>$(BUILD_DIR)/SdkStreamTest.stderr
 	@test "$$(cat $(BUILD_DIR)/SdkStreamTest.stdout)" = "stdin:hello"
 	@test "$$(cat $(BUILD_DIR)/SdkStreamTest.stderr)" = "stderr-ok"
@@ -269,10 +255,9 @@ test: all $(HOST_DIR)/UserThreadTest.texb $(HOST_DIR)/UserThreadFaultTest.texb $
 clean:
 	$(RM) -r $(BUILD_DIR)
 	$(RM) $(HOST_DIR)/treas $(HOST_DIR)/testapp.texb $(HOST_DIR)/fetch.texb
-	$(RM) $(HOST_DIR)/UserThreadTest.texb $(HOST_DIR)/UserThreadFaultTest.texb
+	$(RM) $(HOST_DIR)/UserThreadFaultTest.texb
 	$(RM) $(HOST_DIR)/UserThreadPreemptTest.texb
 	$(RM) $(HOST_DIR)/SystemInformationProtectionTest.texb
-	$(RM) $(HOST_DIR)/SdkTest.texb
 	$(RM) $(HOST_DIR)/SdkStreamTest.texb
 	$(RM) $(HOST_DIR)/SdkImageTest.texb $(HOST_DIR)/InvalidImage.texb
 	$(RM) $(HOST_DIR)/InvalidPermissions.texb $(HOST_DIR)/InvalidEntryPoint.texb
